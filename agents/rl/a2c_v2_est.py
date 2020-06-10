@@ -202,6 +202,7 @@ class A2C(object):
                 policy_entropy_loss.append(policy_entropy_loss0.numpy())
             
         self._update_step_model()
+        self.entropy_coef *= self.entropy_decoy
         self.train_step += 1
         
         test_logit, test_value = self.predict(samples['state'][0])
@@ -382,10 +383,10 @@ class A2C(object):
         return norm
     
     def save_model(self, path):
-        shape = (1, self.num_state_params)
-        bag_fix = tf.random.normal(shape)
-        self.train_model_critic.predict(bag_fix)
-        self.train_model_actor.predict(bag_fix)
+        #bag_shape = (1, self.num_state_params)
+        #bag_fix = tf.random.normal(bag_shape)
+        #self.train_model_critic.predict(bag_fix)
+        #self.train_model_actor.predict(bag_fix)
         self.train_model_critic.save(path+'/critic', save_format="tf")
         self.train_model_actor.save(path+'/actor', save_format="tf")
         
