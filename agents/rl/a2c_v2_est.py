@@ -94,6 +94,11 @@ class A2C(object):
             output_activation_func=actor_activation_func, 
             output_kernel_initializer=actor_kernel_initializer,)
         
+        bag_shape = (1, self.num_state_params)
+        bag_fix = tf.random.normal(bag_shape)
+        _, _ = self._predict_train(bag_fix)
+        _, _ = self.predict(bag_fix)
+        
         self._update_step_model()
         
         #memory
@@ -172,33 +177,34 @@ class A2C(object):
         policy_loss = []
         policy_entropy_loss = []
         for start in range(0, self.memory.size, self.critic_bacth_size):
+            if self.memory.size > start+self.critic_bacth_size:
+                indices = range(start, start+self.critic_bacth_size)
+                
+                self._mb_states = tf.convert_to_tensor(np.atleast_2d(states[indices]), dtype='float32')
+                self._mb_actions = tf.convert_to_tensor(actions[indices], dtype='float32')
+                self._mb_returns = tf.convert_to_tensor(returns[indices], dtype='float32')
             
-            indices = range(start, min(self.memory.size, start+self.critic_bacth_size))
-            
-            self._mb_states = tf.convert_to_tensor(np.atleast_2d(states[indices]), dtype='float32')
-            self._mb_actions = tf.convert_to_tensor(actions[indices], dtype='float32')
-            self._mb_returns = tf.convert_to_tensor(returns[indices], dtype='float32')
-            
-            critic_loss0 = self._critic_train_step()
-            critic_loss.append(critic_loss0.numpy())
+                critic_loss0 = self._critic_train_step()
+                critic_loss.append(critic_loss0.numpy())
         
         for start in range(0, self.memory.size, self.actor_bacth_size):
+            if self.memory.size > start+self.actor_bacth_size:
+                indices = range(start, start+self.actor_bacth_size)
             
-            indices = range(start, min(self.memory.size, start+self.actor_bacth_size))
-            
-            self._mb_states = tf.convert_to_tensor(np.atleast_2d(states[indices]), dtype='float32')
-            self._mb_actions = tf.convert_to_tensor(actions[indices], dtype='float32')
-            self._mb_returns = tf.convert_to_tensor(returns[indices], dtype='float32')
-            
-            policy_loss0, entropy_loss0, policy_entropy_loss0 = self._actor_train_step()
-            
-            entropy_loss.append(entropy_loss0.numpy())
-            policy_loss.append(policy_loss0.numpy())
-            policy_entropy_loss.append(policy_entropy_loss0.numpy())
+                self._mb_states = tf.convert_to_tensor(np.atleast_2d(states[indices]), dtype='float32')
+                self._mb_actions = tf.convert_to_tensor(actions[indices], dtype='float32')
+                self._mb_returns = tf.convert_to_tensor(returns[indices], dtype='float32')
+                
+                policy_loss0, entropy_loss0, policy_entropy_loss0 = self._actor_train_step()
+                
+                entropy_loss.append(entropy_loss0.numpy())
+                policy_loss.append(policy_loss0.numpy())
+                policy_entropy_loss.append(policy_entropy_loss0.numpy())
             
         self._update_step_model()
+        self.train_step += 1
         
-        test_logit, test_value = self.predict(self._mb_states[0])
+        test_logit, test_value = self.predict(samples['state'][0])
         print(test_logit)
         print("------------------------")
         print(test_value)
@@ -247,6 +253,7 @@ class A2C(object):
             advantages = self._advantages(self._mb_returns, values)
             policy_loss = self._policy_loss(self._mb_actions, advantages, policy_logits)
             entropy_loss = self._entropy_loss(policy_logits)
+            #clip_entropy_loss = tf.minimum(entropy_loss*self.max_entropy_part, entropy_loss)
             policy_entropy_loss = policy_loss - self.entropy_coef * entropy_loss
                 #min((entropy_loss+policy_loss)*self.max_entropy_part, entropy_loss)
             
@@ -375,10 +382,10 @@ class A2C(object):
         return norm
     
     def save_model(self, path):
-        #shape = (1, self.num_state_params)
-        #bag_fix = tf.random.normal(shape)
-        #self.train_model_critic.predict(bag_fix)
-        #self.train_model_actor.predict(bag_fix)
+        shape = (1, self.num_state_params)
+        bag_fix = tf.random.normal(shape)
+        self.train_model_critic.predict(bag_fix)
+        self.train_model_actor.predict(bag_fix)
         self.train_model_critic.save(path+'/critic', save_format="tf")
         self.train_model_actor.save(path+'/actor', save_format="tf")
         
