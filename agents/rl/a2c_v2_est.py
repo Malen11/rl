@@ -14,85 +14,73 @@ class A2C(object):
     def __init__(self,
                  num_state_params, 
                  num_actions, 
-                 
-                 critic_hidden_units=[128],
-                 critic_activation_func='tanh', 
-                 critic_kernel_initializer='glorot_uniform',
-                 critic_learning_rate=0.0001,
-                 critic_bacth_size=128,
-                 
-                 actor_hidden_units=[256],
-                 actor_activation_func='tanh', 
-                 actor_kernel_initializer='glorot_uniform',  
-                 actor_learning_rate=0.0001,
-                 actor_bacth_size=2048,
-                 
+                 hidden_units, 
                  gamma=0.99, 
-                 lam = 0,
-                 
+                 learning_rate=0.00005,
+                 value_coef=0.9,
                  entropy_coef=0.9,
-                 entropy_decoy=1,
-                 max_entropy_part=0.9,
-                 
+                 activation_func='tanh', 
+                 kernel_initializer='RandomNormal',
+                 actor_activation_func='tanh', 
+                 actor_kernel_initializer='RandomNormal', 
+                 critic_activation_func='tanh', 
+                 critic_kernel_initializer='RandomNormal',
                  max_grad_norm = 0,
+                 lam = 0.5
                  ):
         
         #Параметры сети
         self.num_actions = num_actions
         self.num_state_params = num_state_params
-        self.critic_hidden_units = critic_hidden_units
-        self.actor_hidden_units = actor_hidden_units
+        self.hidden_units = hidden_units
         
         #параметры обучения
-        self.critic_optimizer = tf.keras.optimizers.Adam(critic_learning_rate, decay=0.99, epsilon=1e-5)
-        self.actor_optimizer = tf.keras.optimizers.Adam(actor_learning_rate, decay=0.99, epsilon=1e-5)      
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate, decay=0.99, epsilon=1e-5)   
         self.max_grad_norm = max_grad_norm
+        self.value_coef = value_coef
         self.entropy_coef = entropy_coef
-        self.entropy_decoy = entropy_decoy
-        self.max_entropy_part = max_entropy_part
         self.gamma = gamma
-        self.lam = lam
         self.train_step = 0
-        self.critic_bacth_size = critic_bacth_size
-        self.actor_bacth_size = actor_bacth_size
+        self.lam = lam
+        #self.batch_size = batch_size
         
         # Step_model that is used for sampling
         self.step_model_critic = SimpleNeuralNetworkModel(
             num_state_params,
-            critic_hidden_units, 
+            hidden_units, 
             1,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
-        
-        self.step_model_actor = SimpleNeuralNetworkModel(
-            num_state_params, 
-            actor_hidden_units, 
-            num_actions,
             activation_func=actor_activation_func, 
             kernel_initializer=actor_kernel_initializer,
             output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer,)
+            output_kernel_initializer=actor_kernel_initializer, )
+        
+        self.step_model_actor = SimpleNeuralNetworkModel(
+            num_state_params, 
+            hidden_units, 
+            num_actions,
+            activation_func=critic_activation_func, 
+            kernel_initializer=critic_kernel_initializer,
+            output_activation_func=critic_activation_func, 
+            output_kernel_initializer=critic_kernel_initializer,)
         
         # Train model for training
         self.train_model_critic = SimpleNeuralNetworkModel(
             num_state_params,
-            critic_hidden_units, 
+            hidden_units, 
             1,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
-        
-        self.train_model_actor = SimpleNeuralNetworkModel(
-            num_state_params, 
-            actor_hidden_units, 
-            num_actions,
             activation_func=actor_activation_func, 
             kernel_initializer=actor_kernel_initializer,
             output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer,)
+            output_kernel_initializer=actor_kernel_initializer, )
+        
+        self.train_model_actor = SimpleNeuralNetworkModel(
+            num_state_params, 
+            hidden_units, 
+            num_actions,
+            activation_func=critic_activation_func, 
+            kernel_initializer=critic_kernel_initializer,
+            output_activation_func=critic_activation_func, 
+            output_kernel_initializer=critic_kernel_initializer,)
         
         self._update_step_model()
         
@@ -154,25 +142,22 @@ class A2C(object):
         samples = self.memory.get_samples()
         
         est_values = self._predict_train_values(samples['next_state'])
+        est_values0 = self._predict_train_values(samples['state'])
         
-        returns = self._returns_est(samples['reward'], samples['done'], est_values)
-        #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
-        #returns = self._general_advantage_estimates(samples['reward'],samples['done'], est_values, est_values0, self.lam)
+        #returns = self._returns_est(samples['reward'], samples['done'], est_values)
+        #returns = self._returns_est(samples['reward'], samples['done'], est_values[-1])
+        returns = self._general_advantage_estimates(
+            samples['reward'],
+            samples['done'], 
+            est_values, 
+            est_values0, 
+            self.lam).numpy()
         
-        samples['return'] = returns
-        samples.shaffle()
         self._mb_states = tf.convert_to_tensor(np.atleast_2d(samples['state']), dtype='float32')
         self._mb_actions = tf.convert_to_tensor(samples['action'], dtype='float32')
-        self._mb_returns = tf.convert_to_tensor(samples['return'], dtype='float32')
+        self._mb_returns = tf.convert_to_tensor(returns, dtype='float32')
         
-        critic_loss = 0;
-        for start in range(0, self.memory.size, self.critic_bacth_size):
-            indices = range(start, start+self.critic_bacth_size)
-            self._mb_states = tf.convert_to_tensor(np.atleast_2d(samples['state'][indices]), dtype='float32')
-            self._mb_actions = tf.convert_to_tensor(samples['action'][indices], dtype='float32')
-            self._mb_returns = tf.convert_to_tensor(samples['return'][indices], dtype='float32')
-            critic_loss += self._critic_train_step()
-        
+        loss = self._train_step()
         self._update_step_model()
         
         test_logit, test_value = self.predict(self._mb_states[0])
@@ -187,33 +172,6 @@ class A2C(object):
         self.clear_memory()
         
         return loss
-        
-    @tf.function
-    def _critic_train_step(self):
-        
-        # Open a GradientTape to record the operations run
-        # during the forward pass, which enables autodifferentiation.
-        with tf.GradientTape() as tape:
-                        
-            #logits - вектор необработанных (ненормализованных) предсказаний, 
-            #которые генерирует модель классификации
-            values = self._predict_train_values(self._mb_states)
-            value_loss = self._value_loss(self._mb_returns, values)
-            
-        # Use the gradient tape to automatically retrieve
-        # the gradients of the trainable variables with respect to the loss.
-        value_weights = self.train_model_critic.trainable_weights
-        value_gradients = tape.gradient(value_loss, value_weights)
-        
-        if self.max_grad_norm is not None:
-            # Clip the gradients (normalize)
-            value_gradients, _ = tf.clip_by_global_norm(value_gradients, self.max_grad_norm)
-        
-        # Run one step of gradient descent by updating
-        # the value of the variables to minimize the loss.
-        self.critic_optimizer.apply_gradients(zip(value_gradients, value_weights))
-        
-        return value_loss
         
     @tf.function
     def _train_step(self):
