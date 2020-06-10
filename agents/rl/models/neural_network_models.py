@@ -169,11 +169,6 @@ class ActorCriticNeuralNetworkModel(tf.keras.Model):
         
         #создание скрытых слоёв сети
         self.hidden_layers = []
-        '''
-        for i in hidden_units:
-            self.hidden_layers.append(tf.keras.layers.Dense(
-                i, activation=activation_func, kernel_initializer=kernel_initializer))
-        '''
     
         for i in hidden_units:
             self.hidden_layers.append(SimpleNeuralNetworkLayerBlock(
@@ -222,14 +217,16 @@ class ActorCriticNeuralNetworkModel(tf.keras.Model):
     
     def get_config(self):
         
-        config = super(SimpleNeuralNetworkModel, self).get_config()
+        config = super(ActorCriticNeuralNetworkModel, self).get_config()
         config.update({'num_input': self.num_input,
                        'hidden_units': self.hidden_units,
                        'num_output': self.num_output,
                        'activation_func': self.activation_func,
                        'kernel_initializer': self.kernel_initializer,
-                       'output_activation_func': self.output_activation_func,
-                       'output_kernel_initializer': self.output_kernel_initializer})
+                       'actor_activation_func': self.actor_activation_func, 
+                       'actor_kernel_initializer': self.actor_kernel_initializer, 
+                       'critic_activation_func': self.critic_activation_func, 
+                       'critic_kernel_initializer': self.critic_kernel_initializer,})
         return config
     
 class SimpleNeuralNetworkLayerBlock(tf.keras.layers.Layer):
