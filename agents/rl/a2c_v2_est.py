@@ -14,73 +14,85 @@ class A2C(object):
     def __init__(self,
                  num_state_params, 
                  num_actions, 
-                 hidden_units, 
-                 gamma=0.99, 
-                 learning_rate=0.00005,
-                 value_coef=0.9,
-                 entropy_coef=0.9,
-                 activation_func='tanh', 
-                 kernel_initializer='RandomNormal',
-                 actor_activation_func='tanh', 
-                 actor_kernel_initializer='RandomNormal', 
+                 
+                 critic_hidden_units=[128],
                  critic_activation_func='tanh', 
-                 critic_kernel_initializer='RandomNormal',
+                 critic_kernel_initializer='glorot_uniform',
+                 critic_learning_rate=0.0001,
+                 critic_bacth_size=128,
+                 
+                 actor_hidden_units=[256],
+                 actor_activation_func='tanh', 
+                 actor_kernel_initializer='glorot_uniform',  
+                 actor_learning_rate=0.0001,
+                 actor_bacth_size=2048,
+                 
+                 gamma=0.99, 
+                 lam = 0.5,
+                 
+                 entropy_coef=0.9,
+                 entropy_decoy=1,
+                 max_entropy_part=0.9,
+                 
                  max_grad_norm = 0,
-                 lam = 0.5
                  ):
         
         #Параметры сети
         self.num_actions = num_actions
         self.num_state_params = num_state_params
-        self.hidden_units = hidden_units
+        self.critic_hidden_units = critic_hidden_units
+        self.actor_hidden_units = actor_hidden_units
         
         #параметры обучения
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate, decay=0.99, epsilon=1e-5)   
+        self.critic_optimizer = tf.keras.optimizers.Adam(critic_learning_rate, decay=0.99, epsilon=1e-5)
+        self.actor_optimizer = tf.keras.optimizers.Adam(actor_learning_rate, decay=0.99, epsilon=1e-5)      
         self.max_grad_norm = max_grad_norm
-        self.value_coef = value_coef
         self.entropy_coef = entropy_coef
+        self.entropy_decoy = entropy_decoy
+        self.max_entropy_part = max_entropy_part
         self.gamma = gamma
-        self.train_step = 0
         self.lam = lam
-        #self.batch_size = batch_size
+        self.train_step = 0
+        self.critic_bacth_size = critic_bacth_size
+        self.actor_bacth_size = actor_bacth_size
         
         # Step_model that is used for sampling
         self.step_model_critic = SimpleNeuralNetworkModel(
             num_state_params,
-            hidden_units, 
+            critic_hidden_units, 
             1,
-            activation_func=actor_activation_func, 
-            kernel_initializer=actor_kernel_initializer,
-            output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer, )
-        
-        self.step_model_actor = SimpleNeuralNetworkModel(
-            num_state_params, 
-            hidden_units, 
-            num_actions,
             activation_func=critic_activation_func, 
             kernel_initializer=critic_kernel_initializer,
             output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer,)
+            output_kernel_initializer=critic_kernel_initializer, )
+        
+        self.step_model_actor = SimpleNeuralNetworkModel(
+            num_state_params, 
+            actor_hidden_units, 
+            num_actions,
+            activation_func=actor_activation_func, 
+            kernel_initializer=actor_kernel_initializer,
+            output_activation_func=actor_activation_func, 
+            output_kernel_initializer=actor_kernel_initializer,)
         
         # Train model for training
         self.train_model_critic = SimpleNeuralNetworkModel(
             num_state_params,
-            hidden_units, 
+            critic_hidden_units, 
             1,
-            activation_func=actor_activation_func, 
-            kernel_initializer=actor_kernel_initializer,
-            output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer, )
-        
-        self.train_model_actor = SimpleNeuralNetworkModel(
-            num_state_params, 
-            hidden_units, 
-            num_actions,
             activation_func=critic_activation_func, 
             kernel_initializer=critic_kernel_initializer,
             output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer,)
+            output_kernel_initializer=critic_kernel_initializer, )
+        
+        self.train_model_actor = SimpleNeuralNetworkModel(
+            num_state_params, 
+            actor_hidden_units, 
+            num_actions,
+            activation_func=actor_activation_func, 
+            kernel_initializer=actor_kernel_initializer,
+            output_activation_func=actor_activation_func, 
+            output_kernel_initializer=actor_kernel_initializer,)
         
         self._update_step_model()
         
@@ -145,19 +157,45 @@ class A2C(object):
         est_values0 = self._predict_train_values(samples['state'])
         
         #returns = self._returns_est(samples['reward'], samples['done'], est_values)
-        #returns = self._returns_est(samples['reward'], samples['done'], est_values[-1])
-        returns = self._general_advantage_estimates(
-            samples['reward'],
-            samples['done'], 
-            est_values, 
-            est_values0, 
-            self.lam).numpy()
+        #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
+        returns = self._general_advantage_estimates(samples['reward'],samples['done'], est_values, est_values0, self.lam)
         
-        self._mb_states = tf.convert_to_tensor(np.atleast_2d(samples['state']), dtype='float32')
-        self._mb_actions = tf.convert_to_tensor(samples['action'], dtype='float32')
-        self._mb_returns = tf.convert_to_tensor(returns, dtype='float32')
+        indices = [i for i in range(0, len(samples['state']))]
+        random.shuffle(indices)
         
-        loss = self._train_step()
+        states = np.asarray([samples['state'][i] for i in indices])
+        actions = np.asarray([samples['action'][i] for i in indices])
+        returns = np.asarray([returns[i] for i in indices])
+        
+        critic_loss = []
+        entropy_loss = []
+        policy_loss = []
+        policy_entropy_loss = []
+        for start in range(0, self.memory.size, self.critic_bacth_size):
+            
+            indices = range(start, min(self.memory.size, start+self.critic_bacth_size))
+            
+            self._mb_states = tf.convert_to_tensor(np.atleast_2d(states[indices]), dtype='float32')
+            self._mb_actions = tf.convert_to_tensor(actions[indices], dtype='float32')
+            self._mb_returns = tf.convert_to_tensor(returns[indices], dtype='float32')
+            
+            critic_loss0 = self._critic_train_step()
+            critic_loss.append(critic_loss0.numpy())
+        
+        for start in range(0, self.memory.size, self.actor_bacth_size):
+            
+            indices = range(start, min(self.memory.size, start+self.actor_bacth_size))
+            
+            self._mb_states = tf.convert_to_tensor(np.atleast_2d(states[indices]), dtype='float32')
+            self._mb_actions = tf.convert_to_tensor(actions[indices], dtype='float32')
+            self._mb_returns = tf.convert_to_tensor(returns[indices], dtype='float32')
+            
+            policy_loss0, entropy_loss0, policy_entropy_loss0 = self._actor_train_step()
+            
+            entropy_loss.append(entropy_loss0.numpy())
+            policy_loss.append(policy_loss0.numpy())
+            policy_entropy_loss.append(policy_entropy_loss0.numpy())
+            
         self._update_step_model()
         
         test_logit, test_value = self.predict(self._mb_states[0])
@@ -165,17 +203,17 @@ class A2C(object):
         print("------------------------")
         print(test_value)
         print("------------------------")
-        loss = [loss[0].numpy(), loss[1].numpy(), loss[2].numpy()]
+        loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
         print(loss)
         print("========================")
         
         self.clear_memory()
         
         return loss
-        
+    
     @tf.function
-    def _train_step(self):
-
+    def _critic_train_step(self):
+        
         # Open a GradientTape to record the operations run
         # during the forward pass, which enables autodifferentiation.
         with tf.GradientTape() as tape:
@@ -196,27 +234,30 @@ class A2C(object):
         
         # Run one step of gradient descent by updating
         # the value of the variables to minimize the loss.
-        self.optimizer.apply_gradients(zip(value_gradients, value_weights))
+        self.critic_optimizer.apply_gradients(zip(value_gradients, value_weights))
+        
+        return value_loss
+        
+    @tf.function
+    def _actor_train_step(self):
         
         with tf.GradientTape() as tape:
                         
-            policy_logits = self._predict_train_policy(self._mb_states)
+            policy_logits, values = self._predict_train(self._mb_states)
             advantages = self._advantages(self._mb_returns, values)
-            entropy_loss = self._entropy_loss(policy_logits)
             policy_loss = self._policy_loss(self._mb_actions, advantages, policy_logits)
+            entropy_loss = self._entropy_loss(policy_logits)
             policy_entropy_loss = policy_loss - self.entropy_coef * entropy_loss
+                #min((entropy_loss+policy_loss)*self.max_entropy_part, entropy_loss)
             
         policy_weights = self.train_model_actor.trainable_weights
         policy_gradients = tape.gradient(policy_entropy_loss, policy_weights)
         
         if self.max_grad_norm is not None:
-            # Clip the gradients (normalize)
             policy_gradients, _ = tf.clip_by_global_norm(policy_gradients, self.max_grad_norm)
             
-        self.optimizer.apply_gradients(zip(policy_gradients, policy_weights))
-        self.train_step += 1
-
-        return [policy_loss, value_loss, entropy_loss]
+        self.actor_optimizer.apply_gradients(zip(policy_gradients, policy_weights))
+        return policy_loss, entropy_loss, policy_entropy_loss
     
     def _update_step_model(self):
         self.step_model_critic.set_weights(self.train_model_critic.get_weights()) 
