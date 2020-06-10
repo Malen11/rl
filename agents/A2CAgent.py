@@ -5,25 +5,35 @@ import numpy as np
 import tensorflow as tf
 from collections import namedtuple
 
-from agents.rl.a2c import A2C
+from agents.rl.a2c_v2_est import A2C
 
 class A2CAgent(object):
 
     def __init__(self,
                  action_num=2,
                  state_shape=None,
-                 mlp_layers=None,
-                 discount_factor=0.99,
-                 learning_rate=0.00005,
-                 value_coef=0.9,
-                 entropy_coef=0.9,
-                 activation_func='tanh', 
-                 kernel_initializer='RandomNormal',
-                 actor_activation_func='tanh', 
-                 actor_kernel_initializer='RandomNormal', 
+                 
+                 critic_mlp_layers=[4,256],
                  critic_activation_func='tanh', 
-                 critic_kernel_initializer='RandomNormal',
+                 critic_kernel_initializer='glorot_uniform',
+                 critic_learning_rate=0.0001,
+                 critic_bacth_size=128,
+                 
+                 actor_mlp_layers=[4,256],
+                 actor_activation_func='tanh', 
+                 actor_kernel_initializer='glorot_uniform',  
+                 actor_learning_rate=0.0001,
+                 actor_bacth_size=2048,
+                 
+                 discount_factor=0.99,
+                 lam=0.5,
+                 
+                 entropy_coef=0.9,
+                 entropy_decoy=1,
+                 max_entropy_part=0.9,
+                 
                  max_grad_norm = 0,
+                 
                  min_reward=0,
                  max_reward=100):
         self.use_raw = False
@@ -32,17 +42,27 @@ class A2CAgent(object):
         self.algoritm = A2C(
             num_state_params=state_shape[0],
             num_actions=action_num,
-            hidden_units=np.full((mlp_layers[0]), mlp_layers[1]), 
-            gamma=discount_factor, 
-            learning_rate=learning_rate,
-            value_coef=value_coef,
-            entropy_coef=entropy_coef,
-            activation_func=activation_func, 
-            kernel_initializer=kernel_initializer,
-            actor_activation_func=actor_activation_func, 
-            actor_kernel_initializer=actor_kernel_initializer, 
+            
+            critic_hidden_units=np.full((critic_mlp_layers[0]), critic_mlp_layers[1]), 
+            critic_learning_rate=critic_learning_rate,
             critic_activation_func=critic_activation_func, 
             critic_kernel_initializer=critic_kernel_initializer,
+            critic_bacth_size=critic_bacth_size,
+            
+            actor_hidden_units=np.full((actor_mlp_layers[0]), actor_mlp_layers[1]),
+            actor_learning_rate=actor_learning_rate, 
+            actor_activation_func=actor_activation_func, 
+            actor_kernel_initializer=actor_kernel_initializer,  
+            actor_bacth_size=actor_bacth_size,
+            
+            gamma=discount_factor, 
+            lam = lam,
+            
+            entropy_coef=entropy_coef,
+            entropy_decoy=entropy_decoy,
+            max_entropy_part=max_entropy_part,
+            
+            max_grad_norm = max_grad_norm,
             )
            
         # Total timesteps
@@ -64,17 +84,13 @@ class A2CAgent(object):
             next_state['obs'], 
             done)
         
-        if done is True:
-            self.train()
-        
         self.total_t += 1
         
     def train(self):
         loss = self.algoritm.train()
-        loss = [loss[0].numpy(), loss[1].numpy()]
+        
         self.train_t += 1
         
-        self.algoritm.clear_memory()
         return loss
 
     def step(self, state):
