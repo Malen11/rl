@@ -245,6 +245,8 @@ class A2C(object):
         entropy_loss_list = []
         policy_loss_list = []
         policy_entropy_loss_list = []
+            
+        values = self._predict_train_values(states).numpy()
 
         for start in range(0, self.memory.size, self.actor_bacth_size):
 
@@ -254,6 +256,7 @@ class A2C(object):
                 self._mb_states=states[indices]
                 self._mb_actions=actions[indices]
                 self._mb_returns=returns[indices]
+                self._mb_values=values[indices]
 
                 policy_loss, entropy_loss, policy_entropy_loss = self._actor_train_step()
 
@@ -268,8 +271,8 @@ class A2C(object):
         
         with tf.GradientTape() as tape:
                         
-            policy_logits, values = self._predict_train(self._mb_states)
-            advantages = self._advantages(self._mb_returns, values)
+            policy_logits = self.train_model_actor(self._mb_states)
+            advantages = self._advantages(self._mb_returns, self._mb_values)
             policy_loss = self._policy_loss(self._mb_actions, advantages, policy_logits)
             entropy_loss = self._entropy_loss(policy_logits)
             #clip_entropy_loss = tf.minimum(entropy_loss*self.max_entropy_part, entropy_loss)
