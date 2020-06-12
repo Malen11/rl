@@ -111,6 +111,121 @@ class SimpleNeuralNetworkModel(tf.keras.Model):
                        'output_kernel_initializer': self.output_kernel_initializer})
         return config
     
+class LSTMNeuralNetworkModel(tf.keras.Model):
+    
+    def __init__(self, 
+                 num_input,
+                 hidden_units, 
+                 num_output,
+                 timesteps,
+                 activation_func='tanh', 
+                 kernel_initializer='RandomNormal',
+                 output_activation_func='tanh', 
+                 output_kernel_initializer='RandomNormal',
+                 **kwargs):
+        '''
+        
+        Инициализация модели сети
+
+        Parameters
+        ----------
+        num_input : TYPE
+            Количество параметров входного слоя.
+        hidden_units : TYPE
+            Массив размерности скрытых слоёв.
+        num_output: TYPE
+            Количество параметров выходного слоя.
+        activation_func : TYPE, optional
+            DESCRIPTION. The default is 'tanh'.
+        kernel_initializer : TYPE, optional
+            DESCRIPTION. The default is 'RandomNormal'.
+        output_activation_func : TYPE, optional
+            DESCRIPTION. The default is 'tanh'.
+        output_kernel_initializer : TYPE, optional
+            DESCRIPTION. The default is 'RandomNormal'.
+        **kwargs : TYPE
+            DESCRIPTION.
+
+        Returns
+        -------
+        None.
+
+        '''
+        super(LSTMNeuralNetworkModel, self).__init__(**kwargs)
+        
+        self.num_input = num_input
+        self.hidden_units = hidden_units
+        self.num_output = num_output
+        self.timesteps = timesteps
+        self.activation_func = activation_func
+        self.kernel_initializer = kernel_initializer
+        self.output_activation_func = output_activation_func
+        self.output_kernel_initializer = output_kernel_initializer
+        
+        #создание входного слоя сети
+        self.input_layer = tf.keras.layers.InputLayer(input_shape=(timesteps, num_input))
+        
+        #lstm слой
+        self.lstm_layer  = tf.keras.layers.LSTM(num_input)
+        
+        #создание скрытых слоёв сети
+        self.hidden_layers = []
+        '''
+        for i in hidden_units:
+            self.hidden_layers.append(tf.keras.layers.Dense(
+                i, activation=activation_func, kernel_initializer=kernel_initializer))
+        '''
+    
+        for i in hidden_units:
+            self.hidden_layers.append(SimpleNeuralNetworkLayerBlock(
+                i, 
+                activation_func=activation_func, 
+                kernel_initializer=kernel_initializer))
+            
+        #создание выходного слоя сети
+        self.output_layer = tf.keras.layers.Dense(
+            num_output, 
+            activation=output_activation_func, 
+            kernel_initializer=output_kernel_initializer)
+        
+        
+    @tf.function
+    def call(self, inputs, training=None):
+        '''
+        Расчёт значений модели
+
+        Parameters
+        ----------
+        inputs : TYPE
+            Входные данные сети(состояние).
+        training : TYPE
+            режим тренировки.
+
+        Returns
+        -------
+        output : TYPE
+            DESCRIPTION.
+
+        '''
+        x = self.input_layer(inputs)
+        x = self.lstm_layer(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        x = self.output_layer(x)
+        return x
+    
+    def get_config(self):
+        config = super(LSTMNeuralNetworkModel, self).get_config() 
+        '''
+        config.update({'num_input': self.num_input,
+                       'hidden_units': self.hidden_units,
+                       'num_output': self.num_output,
+                       'activation_func': self.activation_func,
+                       'kernel_initializer': self.kernel_initializer,
+                       'output_activation_func': self.output_activation_func,
+                       'output_kernel_initializer': self.output_kernel_initializer})
+        return config
+        '''
 class ActorCriticNeuralNetworkModel(tf.keras.Model):
     
     def __init__(self, 
