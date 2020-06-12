@@ -53,6 +53,15 @@ class A2C(object):
         self.critic_bacth_size = critic_bacth_size
         self.actor_bacth_size = actor_bacth_size
         
+        #memory
+        self.memory = ReplayMemory()
+        
+        #train memory
+        self._mb_states = []
+        self._mb_actions = []
+        self._mb_returns = []
+        self._mb_values = []
+        
         # Step_model that is used for sampling
         self.step_model_critic = SimpleNeuralNetworkModel(
             num_state_params,
@@ -91,52 +100,47 @@ class A2C(object):
             output_activation_func=actor_activation_func, 
             output_kernel_initializer=actor_kernel_initializer,)
         
-        bag_shape = (1, self.num_state_params)
-        bag_fix = tf.random.normal(bag_shape)
-        _, _ = self._predict_train(bag_fix)
-        _, _ = self.predict(bag_fix)
-        
+        self.bug_fix()
         self._update_step_model()
-        
-        #memory
-        self.memory = ReplayMemory()
-        
-        #train memory
-        self._mb_states = []
-        self._mb_actions = []
-        self._mb_returns = []
-        self._mb_values = []
     
     def predict(self, inputs, training=False):
+        
         policy_logits = self.predict_policy(inputs, training)
         values = self.predict_values(inputs, training)
+        
         return policy_logits, values
     
     def predict_policy(self, inputs, training=False):
-        policy_logits = self.step_model_actor(
-            tf.convert_to_tensor(np.atleast_2d(inputs)))
+        
+        policy_logits = self.step_model_actor(inputs)
+        
         return policy_logits
     
     def predict_values(self, inputs, training=False):
-        values = self.step_model_critic(
-            tf.convert_to_tensor(np.atleast_2d(inputs)))
+        
+        values = self.step_model_critic(inputs)
         values = tf.reshape(values, [-1])
+        
         return values
     
     def _predict_train(self, inputs, training=False):
-        policy_logits = self._predict_train_policy(inputs, training)
+        
         values = self._predict_train_values(inputs, training)
+        policy_logits = self._predict_train_policy(inputs, training)
+        
         return policy_logits, values
     
     def _predict_train_policy(self, inputs, training=False):
-        policy_logits = self.train_model_actor(
-            tf.convert_to_tensor(np.atleast_2d(inputs)))
+        
+        policy_logits = self.train_model_actor(inputs)
+        
         return policy_logits
     
     def _predict_train_values(self, inputs, training=False):
-        values = self.train_model_critic(
-            tf.convert_to_tensor(np.atleast_2d(inputs)))
+        
+        values = self.train_model_critic(inputs)
         values = tf.reshape(values, [-1])
+        
         return values
     
     def feed(self, state, action, reward, next_state, done):
@@ -182,7 +186,8 @@ class A2C(object):
         self.entropy_coef *= self.entropy_decoy
         self.train_step += 1
 
-        test_logit, test_value = self.predict(samples['state'][0])
+        test_state = np.asarray([samples['state'][0]])
+        test_logit, test_value = self.predict(test_state)
         print(test_logit)
         print("------------------------")
         print(test_value)
@@ -288,12 +293,16 @@ class A2C(object):
         return policy_loss, entropy_loss, policy_entropy_loss
     
     def _update_step_model(self):
+        
         self.step_model_critic.set_weights(self.train_model_critic.get_weights()) 
         self.step_model_actor.set_weights(self.train_model_actor.get_weights()) 
         
     def get_action(self, state, legal_actions):
         
-        logits = self.predict_policy(np.atleast_2d(state))
+        batch = [state]
+        ts = tf.convert_to_tensor(batch)
+        
+        logits = self.predict_policy(ts)
         probs = self.softmax(logits, legal_actions)[0]
         selected_action = np.random.choice(self.num_actions, p=probs)
         
@@ -310,54 +319,54 @@ class A2C(object):
     def argmax(self, logits, legal_actions=None):
         
         probs = self.softmax(logits, legal_actions)
-        
         ts = tf.Variable(probs)
+        
         return tf.math.argmax(ts, axis=1).numpy()
     
     def _value_loss(self, returns, values):
-        # Value loss is typically MSE between value estimates and rewards.
+        
         return tf.math.reduce_mean(tf.keras.losses.MSE(returns, values))
       
     def _policy_loss(self, actions, advantages, logits):
         
         actions = tf.cast(actions, dtype='int32')
         
-        # Sparse categorical CE loss obj that supports sample_weight arg on `call()`.
-        # `from_logits` argument ensures transformation into normalized probabilities.
-        #weighted_sparse_ce = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
         cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
              labels=actions, 
              logits=logits)
         
-        # Policy loss is defined by policy gradients, weighted by advantages.
-        # Note: we only calculate the loss on the actions we've actually taken.
-        #policy_loss = weighted_sparse_ce(actions, logits, sample_weight=advantages)
-        # We want to minimize policy 
         policy_loss = tf.math.reduce_mean(cross_entropy * advantages)
+        
         return policy_loss
-        #return policy_loss
       
     def _entropy_loss(self, logits):
         
-        # Entropy loss can be calculated as cross-entropy over itself.
-        entropy_loss = tf.keras.losses.categorical_crossentropy(logits, logits, from_logits=True)
+        entropy_loss = tf.math.reduce_mean(
+            tf.keras.losses.categorical_crossentropy(logits, logits, from_logits=True))
         
-        return tf.math.reduce_mean(entropy_loss)
+        return entropy_loss
     
     def _advantages(self, returns, values):
+        
         advantages = returns-values
+        
         return advantages
     
     def _returns(self, rewards, dones, last_value):
+        
         returns = np.zeros_like(rewards)
+        
         next_value = last_value
         for t in reversed(range(len(rewards))):
             returns[t] = rewards[t] + (1 - dones[t]) * self.gamma * next_value
             next_value = returns[t]
+            
         return returns
     
     def _returns_est(self, rewards, dones, next_values):
+        
         returns = rewards + (1 - dones) * self.gamma * next_values
+        
         return returns
       
     def _general_advantage_estimates(self, rewards, dones, values, next_values, lam):
@@ -390,10 +399,21 @@ class A2C(object):
         
         return norm
 
+    def bug_fix(self):
+        shape = (1, self.num_state_params)
+        fix = np.random.random(shape)
+        self._predict_train(fix)
+        self.predict(fix)
+        self.train_model_critic.predict(fix)
+        self.train_model_actor.predict(fix)
+        self.step_model_critic.predict(fix)
+        self.step_model_actor.predict(fix)
+
     def save_model(self, path):
 
         if not os.path.exists(path+'/critic'):
             os.makedirs(path+'/critic')
+        if not os.path.exists(path+'/actor'):
             os.makedirs(path+'/actor')
 
         #bag_shape = (1, self.num_state_params)
