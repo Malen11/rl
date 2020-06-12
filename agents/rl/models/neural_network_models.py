@@ -216,16 +216,16 @@ class LSTMNeuralNetworkModel(tf.keras.Model):
     
     def get_config(self):
         config = super(LSTMNeuralNetworkModel, self).get_config() 
-        '''
         config.update({'num_input': self.num_input,
                        'hidden_units': self.hidden_units,
                        'num_output': self.num_output,
+                       'timesteps': self.timesteps,
                        'activation_func': self.activation_func,
                        'kernel_initializer': self.kernel_initializer,
                        'output_activation_func': self.output_activation_func,
                        'output_kernel_initializer': self.output_kernel_initializer})
         return config
-        '''
+    
 class ActorCriticNeuralNetworkModel(tf.keras.Model):
     
     def __init__(self, 
