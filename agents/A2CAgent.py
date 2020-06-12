@@ -97,7 +97,11 @@ class A2CAgent(object):
         return self.algoritm.get_action(state['obs'], state['legal_actions'])
     
     def eval_step(self, state):
-        logits,_ = self.algoritm.predict(state['obs']) 
+        
+        batch = [state['obs']]
+        ts = tf.convert_to_tensor(batch)
+        
+        logits,_ = self.algoritm.predict(ts)
         probs = self.algoritm.softmax(logits, state['legal_actions'])[0]
         best_action = np.argmax(probs)
         return best_action, probs
