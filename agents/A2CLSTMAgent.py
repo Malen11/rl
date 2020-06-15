@@ -14,20 +14,22 @@ class A2CLSTMAgent(object):
                  state_shape=None,
                  timesteps = 5,
                  
-                 critic_mlp_layers=[4,256],
+                 critic_lstm_layers=[1,256],
+                 critic_mlp_layers=[3,256],
                  critic_activation_func='tanh', 
                  critic_kernel_initializer='glorot_uniform',
                  critic_learning_rate=0.0001,
                  critic_bacth_size=128,
                  
-                 actor_mlp_layers=[4,256],
+                 actor_lstm_layers=[1,256],
+                 actor_mlp_layers=[3,256],
                  actor_activation_func='tanh', 
                  actor_kernel_initializer='glorot_uniform',  
                  actor_learning_rate=0.0001,
                  actor_bacth_size=2048,
                  
                  discount_factor=0.99,
-                 lam=0.5,
+                 #lam=0.5,
                  
                  entropy_coef=0.9,
                  entropy_decoy=1,
@@ -44,12 +46,14 @@ class A2CLSTMAgent(object):
             num_state_params=state_shape[0],
             num_actions=action_num,
             
+            critic_lstm_units=np.full((critic_lstm_layers[0]), critic_lstm_layers[1]), 
             critic_hidden_units=np.full((critic_mlp_layers[0]), critic_mlp_layers[1]), 
             critic_learning_rate=critic_learning_rate,
             critic_activation_func=critic_activation_func, 
             critic_kernel_initializer=critic_kernel_initializer,
             critic_bacth_size=critic_bacth_size,
             
+            actor_lstm_units=np.full((actor_lstm_layers[0]), actor_lstm_layers[1]),
             actor_hidden_units=np.full((actor_mlp_layers[0]), actor_mlp_layers[1]),
             actor_learning_rate=actor_learning_rate, 
             actor_activation_func=actor_activation_func, 
@@ -57,7 +61,7 @@ class A2CLSTMAgent(object):
             actor_bacth_size=actor_bacth_size,
             
             gamma=discount_factor, 
-            lam = lam,
+            #lam = lam,
             
             entropy_coef=entropy_coef,
             entropy_decoy=entropy_decoy,
