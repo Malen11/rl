@@ -115,6 +115,7 @@ class LSTMNeuralNetworkModel(tf.keras.Model):
     
     def __init__(self, 
                  num_input,
+                 lstm_units, 
                  hidden_units, 
                  num_output,
                  timesteps,
@@ -123,37 +124,10 @@ class LSTMNeuralNetworkModel(tf.keras.Model):
                  output_activation_func='tanh', 
                  output_kernel_initializer='RandomNormal',
                  **kwargs):
-        '''
-        
-        Инициализация модели сети
-
-        Parameters
-        ----------
-        num_input : TYPE
-            Количество параметров входного слоя.
-        hidden_units : TYPE
-            Массив размерности скрытых слоёв.
-        num_output: TYPE
-            Количество параметров выходного слоя.
-        activation_func : TYPE, optional
-            DESCRIPTION. The default is 'tanh'.
-        kernel_initializer : TYPE, optional
-            DESCRIPTION. The default is 'RandomNormal'.
-        output_activation_func : TYPE, optional
-            DESCRIPTION. The default is 'tanh'.
-        output_kernel_initializer : TYPE, optional
-            DESCRIPTION. The default is 'RandomNormal'.
-        **kwargs : TYPE
-            DESCRIPTION.
-
-        Returns
-        -------
-        None.
-
-        '''
         super(LSTMNeuralNetworkModel, self).__init__(**kwargs)
         
         self.num_input = num_input
+        self.lstm_units = lstm_units
         self.hidden_units = hidden_units
         self.num_output = num_output
         self.timesteps = timesteps
@@ -166,15 +140,13 @@ class LSTMNeuralNetworkModel(tf.keras.Model):
         self.input_layer = tf.keras.layers.InputLayer(input_shape=(timesteps, num_input))
         
         #lstm слой
-        self.lstm_layer  = tf.keras.layers.LSTM(num_input)
+        self.lstm_layers  = []
         
+        for i in lstm_units:
+            self.lstm_layers.append(tf.keras.layers.LSTM(i))
+            
         #создание скрытых слоёв сети
         self.hidden_layers = []
-        '''
-        for i in hidden_units:
-            self.hidden_layers.append(tf.keras.layers.Dense(
-                i, activation=activation_func, kernel_initializer=kernel_initializer))
-        '''
     
         for i in hidden_units:
             self.hidden_layers.append(SimpleNeuralNetworkLayerBlock(
@@ -208,7 +180,8 @@ class LSTMNeuralNetworkModel(tf.keras.Model):
 
         '''
         x = self.input_layer(inputs)
-        x = self.lstm_layer(x)
+        for layer in self.lstm_layers:
+            x = layer(x)
         for layer in self.hidden_layers:
             x = layer(x)
         x = self.output_layer(x)
@@ -217,6 +190,7 @@ class LSTMNeuralNetworkModel(tf.keras.Model):
     def get_config(self):
         config = super(LSTMNeuralNetworkModel, self).get_config() 
         config.update({'num_input': self.num_input,
+                       'lstm_layers': self.lstm_layers,
                        'hidden_units': self.hidden_units,
                        'num_output': self.num_output,
                        'timesteps': self.timesteps,
