@@ -29,7 +29,7 @@ class A2CLSTMAgent(object):
                  actor_bacth_size=2048,
                  
                  discount_factor=0.99,
-                 #lam=0.5,
+                 lam=0.5,
                  
                  entropy_coef=0.9,
                  entropy_decoy=1,
@@ -80,7 +80,12 @@ class A2CLSTMAgent(object):
         self.min_reward = 0
         self.max_reward = 100
         
-
+    def get_memory(self):
+        return self.algoritm.get_memory()
+        
+    def feed_batch(self, batch):
+        self.algoritm.feed_batch(batch)
+        
     def feed(self, ts):
         (state, action, reward, next_state, done) = tuple(ts)
         self.algoritm.feed(
@@ -98,6 +103,12 @@ class A2CLSTMAgent(object):
         self.train_t += 1
         
         return loss
+
+    def get_weights(self):
+        return self.algoritm.get_weights()
+        
+    def set_weights(self, weights):
+         self.algoritm.set_weights(weights)
 
     def step(self, state):
         return self.algoritm.get_action(state['obs'], state['legal_actions'])
