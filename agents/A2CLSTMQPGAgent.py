@@ -14,24 +14,24 @@ class A2CLSTMQPGAgent(object):
                  state_shape=None,
                  timesteps = 5,
                  
-                 critic_lstm_layers=[1,256],
-                 critic_mlp_layers=[3,256],
+                 critic_lstm_layers=[1,512],
+                 critic_mlp_layers=[3,512],
                  critic_activation_func='tanh', 
                  critic_kernel_initializer='glorot_uniform',
-                 critic_learning_rate=0.0001,
+                 critic_learning_rate=0.001,
                  critic_bacth_size=128,
                  
-                 actor_lstm_layers=[1,256],
-                 actor_mlp_layers=[3,256],
+                 actor_lstm_layers=[1,512],
+                 actor_mlp_layers=[3,512],
                  actor_activation_func='tanh', 
                  actor_kernel_initializer='glorot_uniform',  
                  actor_learning_rate=0.0001,
-                 actor_bacth_size=2048,
+                 actor_bacth_size=512,
                  
-                 discount_factor=0.99,
+                 discount_factor=0.95,
                  #lam=0.5,
                  
-                 entropy_coef=0.9,
+                 entropy_coef=0.5,
                  entropy_decoy=1,
                  max_entropy_part=0.9,
                  
@@ -80,7 +80,12 @@ class A2CLSTMQPGAgent(object):
         self.min_reward = 0
         self.max_reward = 100
         
-
+    def get_memory(self):
+        return self.algoritm.get_memory()
+        
+    def feed_batch(self, batch):
+        self.algoritm.feed_batch(batch)
+        
     def feed(self, ts):
         (state, action, reward, next_state, done) = tuple(ts)
         self.algoritm.feed(
@@ -99,6 +104,12 @@ class A2CLSTMQPGAgent(object):
         
         return loss
 
+    def get_weights(self):
+        return self.algoritm.get_weights()
+        
+    def set_weights(self, weights):
+         self.algoritm.set_weights(weights)
+        
     def step(self, state):
         return self.algoritm.get_action(state['obs'], state['legal_actions'])
     
