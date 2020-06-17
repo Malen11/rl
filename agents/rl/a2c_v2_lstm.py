@@ -7,18 +7,21 @@ import os
 from agents.rl.utils import ReplayMemory, LSTMemory
 from agents.rl.models.neural_network_models import SimpleNeuralNetworkModel, LSTMNeuralNetworkModel
 from pprint import pprint
+
 class A2CLSTM(object):
     def __init__(self,
                  num_state_params, 
                  num_actions,
                  timesteps = 5,
                  
+                 critic_lstm_units=[128],
                  critic_hidden_units=[128],
                  critic_activation_func='tanh', 
                  critic_kernel_initializer='glorot_uniform',
                  critic_learning_rate=0.0001,
                  critic_bacth_size=128,
                  
+                 actor_lstm_units=[256],
                  actor_hidden_units=[256],
                  actor_activation_func='tanh', 
                  actor_kernel_initializer='glorot_uniform',  
@@ -35,11 +38,9 @@ class A2CLSTM(object):
                  max_grad_norm = 0,
                  ):
         
-        #Параметры сети
+        #Параметры игры
         self.num_actions = num_actions
         self.num_state_params = num_state_params
-        self.critic_hidden_units = critic_hidden_units
-        self.actor_hidden_units = actor_hidden_units
         self.timesteps = timesteps
         
         #параметры обучения
@@ -55,6 +56,31 @@ class A2CLSTM(object):
         self.critic_bacth_size = critic_bacth_size
         self.actor_bacth_size = actor_bacth_size
         
+        # Step_model that is used for sampling
+        self._critic = LSTMNeuralNetworkModel(
+            num_state_params,
+            critic_lstm_units, 
+            critic_hidden_units, 
+            1,
+            timesteps,
+            activation_func=critic_activation_func, 
+            kernel_initializer=critic_kernel_initializer,
+            output_activation_func=critic_activation_func, 
+            output_kernel_initializer=critic_kernel_initializer, )
+        
+        self._actor = LSTMNeuralNetworkModel(
+            num_state_params, 
+            actor_lstm_units, 
+            actor_hidden_units, 
+            num_actions,
+            timesteps,
+            activation_func=actor_activation_func, 
+            kernel_initializer=actor_kernel_initializer,
+            output_activation_func=actor_activation_func, 
+            output_kernel_initializer=actor_kernel_initializer,)
+        
+        self.bug_fix()
+        
         #memory
         self.memory = ReplayMemory()
         
@@ -66,51 +92,6 @@ class A2CLSTM(object):
         
         #lstm
         self.lstm = LSTMemory(timesteps, (num_state_params,))
-        
-        # Step_model that is used for sampling
-        self.step_model_critic = LSTMNeuralNetworkModel(
-            num_state_params,
-            critic_hidden_units, 
-            1,
-            timesteps,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
-        
-        self.step_model_actor = LSTMNeuralNetworkModel(
-            num_state_params, 
-            actor_hidden_units, 
-            num_actions,
-            timesteps,
-            activation_func=actor_activation_func, 
-            kernel_initializer=actor_kernel_initializer,
-            output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer,)
-        
-        # Train model for training
-        self.train_model_critic = LSTMNeuralNetworkModel(
-            num_state_params,
-            critic_hidden_units, 
-            1,
-            timesteps,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
-        
-        self.train_model_actor = LSTMNeuralNetworkModel(
-            num_state_params, 
-            actor_hidden_units, 
-            num_actions,
-            timesteps,
-            activation_func=actor_activation_func, 
-            kernel_initializer=actor_kernel_initializer,
-            output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer,)
-        
-        self.bug_fix()
-        self._update_step_model()
     
     def predict(self, inputs, training=False):
         
@@ -121,37 +102,28 @@ class A2CLSTM(object):
     
     def predict_policy(self, inputs, training=False):
         
-        policy_logits = self.step_model_actor(inputs)
+        policy_logits = self._actor(inputs)
         
         return policy_logits
     
     def predict_values(self, inputs, training=False):
         
-        values = self.step_model_critic(inputs)
+        values = self._critic(inputs)
         values = tf.reshape(values, [-1])
         
         return values
     
-    def _predict_train(self, inputs, training=False):
+    def get_memory(self):
+        return self.memory.get_samples()
         
-        values = self._predict_train_values(inputs, training)
-        policy_logits = self._predict_train_policy(inputs, training)
+    def feed_batch(self, batch):
+        for i in range(len(batch['state'])):
+            self.feed(batch['state'][i], 
+                      batch['action'][i], 
+                      batch['reward'][i], 
+                      batch['next_state'][i], 
+                      batch['done'][i])
         
-        return policy_logits, values
-    
-    def _predict_train_policy(self, inputs, training=False):
-        
-        policy_logits = self.train_model_actor(inputs)
-        
-        return policy_logits
-    
-    def _predict_train_values(self, inputs, training=False):
-        
-        values = self.train_model_critic(inputs)
-        values = tf.reshape(values, [-1])
-        
-        return values
-    
     def feed(self, state, action, reward, next_state, done):
         replay = {
             'state': state,
@@ -170,13 +142,13 @@ class A2CLSTM(object):
         samples = self.memory.get_samples()
         
         states = self.split_to_timesteps(samples['state'], samples['done'])
-        est_values = self._predict_train_values(states)
+        est_values = self.predict_values(states)
         
         next_dones=np.copy(samples['done'])
         next_dones = np.roll(next_dones, -1)
         next_dones[-1] = True
         next_states = self.split_to_timesteps(samples['next_state'], next_dones)
-        est_next_values = self._predict_train_values(next_states)
+        est_next_values = self.predict_values(next_states)
         
         #returns = self._returns_est(samples['reward'], samples['done'], est_values)
         #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
@@ -197,20 +169,30 @@ class A2CLSTM(object):
         critic_loss = self._critic_train(states, returns)
         policy_loss, entropy_loss, policy_entropy_loss = self._actor_train(states, actions, returns)
 
-        self._update_step_model()
         self.entropy_coef *= self.entropy_decoy
         self.train_step += 1
 
         test_state = np.asarray([states[0]])
         test_logit, test_value = self.predict(test_state)
-        print(test_logit)
+        print("========================")
+        print('train_step: ', self.train_step)
         print("------------------------")
-        print(test_value)
+        print('entropy coef: ', self.entropy_coef)
         print("------------------------")
-        loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
-        print(loss)
+        print('test logit: ', test_logit)
+        print("------------------------")
+        print('test value: ', test_value)
+        print("------------------------")
+        print('critic loss: ', critic_loss)
+        print("------------------------")
+        print('policy loss: ', policy_loss)
+        print("------------------------")
+        print('entropy loss: ', entropy_loss)
+        print("------------------------")
+        print('policy+entropy loss: ', policy_entropy_loss)
         print("========================")
         
+        loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
         self.clear_memory()
         
         return loss
@@ -238,10 +220,10 @@ class A2CLSTM(object):
         
         with tf.GradientTape() as tape:
                         
-            values = self._predict_train_values(self._mb_states)
+            values = self.predict_values(self._mb_states)
             value_loss = self._value_loss(self._mb_returns, values)
             
-        value_weights = self.train_model_critic.trainable_weights
+        value_weights = self._critic.trainable_weights
         value_gradients = tape.gradient(value_loss, value_weights)
         
         if self.max_grad_norm is not None:
@@ -257,7 +239,7 @@ class A2CLSTM(object):
         policy_loss_list = []
         policy_entropy_loss_list = []
             
-        values = self._predict_train_values(states).numpy()
+        values = self.predict_values(states).numpy()
 
         for start in range(0, self.memory.size, self.actor_bacth_size):
 
@@ -282,14 +264,14 @@ class A2CLSTM(object):
         
         with tf.GradientTape() as tape:
                         
-            policy_logits = self.train_model_actor(self._mb_states)
+            policy_logits = self._actor(self._mb_states)
             advantages = self._advantages(self._mb_returns, self._mb_values)
             policy_loss = self._policy_loss(self._mb_actions, advantages, policy_logits)
             entropy_loss = self._entropy_loss(policy_logits)
             #clip_entropy_loss = tf.minimum(entropy_loss*self.max_entropy_part, entropy_loss)
             policy_entropy_loss = policy_loss - self.entropy_coef * entropy_loss
             
-        policy_weights = self.train_model_actor.trainable_weights
+        policy_weights = self._actor.trainable_weights
         policy_gradients = tape.gradient(policy_entropy_loss, policy_weights)
         
         if self.max_grad_norm is not None:
@@ -298,9 +280,17 @@ class A2CLSTM(object):
         self.actor_optimizer.apply_gradients(zip(policy_gradients, policy_weights))
         return policy_loss, entropy_loss, policy_entropy_loss
     
-    def _update_step_model(self):
-        self.step_model_critic.set_weights(self.train_model_critic.get_weights()) 
-        self.step_model_actor.set_weights(self.train_model_actor.get_weights()) 
+    def get_weights(self):
+        weights = {
+            'critic': self._critic.get_weights(),
+            'actor': self._actor.get_weights()
+            }
+        return weights
+    
+    def set_weights(self, weights):
+        self._critic.set_weights(weights['critic'])
+        self._actor.set_weights(weights['actor'])
+        return weights
         
     def get_action(self, state, legal_actions):
         
@@ -431,12 +421,9 @@ class A2CLSTM(object):
     def bug_fix(self):
         shape = (1, self.timesteps, self.num_state_params)
         fix = np.random.random(shape)
-        self._predict_train(fix)
         self.predict(fix)
-        self.train_model_critic.predict(fix)
-        self.train_model_actor.predict(fix)
-        self.step_model_critic.predict(fix)
-        self.step_model_actor.predict(fix)
+        self._critic.predict(fix)
+        self._actor.predict(fix)
         
     def reset_lstm_memory(self):
         self.lstm.reset()
@@ -452,12 +439,9 @@ class A2CLSTM(object):
         #bag_fix = tf.random.normal(bag_shape)
         #self.train_model_critic.predict(bag_fix)
         #self.train_model_actor.predict(bag_fix)
-        self.train_model_critic.save(path+'/critic', save_format="tf")
-        self.train_model_actor.save(path+'/actor', save_format="tf")
+        self._critic.save(path+'/critic', save_format="tf")
+        self._actor.save(path+'/actor', save_format="tf")
         
     def load_model(self, path):
-        self.train_model_critic = tf.keras.models.load_model(path+'/critic')
-        self.train_model_actor = tf.keras.models.load_model(path+'/actor')
-        self.step_model_critic = tf.keras.models.load_model(path+'/critic')
-        self.step_model_actor = tf.keras.models.load_model(path+'/actor')
-        self._update_step_model()
+        self._critic = tf.keras.models.load_model(path+'/critic')
+        self._actor = tf.keras.models.load_model(path+'/actor')
