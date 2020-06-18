@@ -8,11 +8,12 @@ from agents.rl.utils import ReplayMemory, LSTMemory
 from agents.rl.models.neural_network_models import SimpleNeuralNetworkModel, LSTMNeuralNetworkModel
 from pprint import pprint
 
-class A2CLSTM(object):
+class A2CLSTMQPG(object):
     def __init__(self,
                  num_state_params, 
                  num_actions,
                  timesteps = 5,
+                 trainble=True,
                  
                  critic_lstm_units=[128],
                  critic_hidden_units=[128],
@@ -42,6 +43,7 @@ class A2CLSTM(object):
         self.num_actions = num_actions
         self.num_state_params = num_state_params
         self.timesteps = timesteps
+        self.trainble = trainble
         
         #параметры обучения
         self.critic_optimizer = tf.keras.optimizers.Adam(critic_learning_rate, decay=0.99, epsilon=1e-5)
@@ -57,16 +59,19 @@ class A2CLSTM(object):
         self.actor_bacth_size = actor_bacth_size
         
         # Step_model that is used for sampling
-        self._critic = LSTMNeuralNetworkModel(
-            num_state_params,
-            critic_lstm_units, 
-            critic_hidden_units, 
-            num_actions,
-            timesteps,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
+        if self.trainble:
+            self._critic = LSTMNeuralNetworkModel(
+                num_state_params,
+                critic_lstm_units, 
+                critic_hidden_units, 
+                num_actions,
+                timesteps,
+                activation_func=critic_activation_func, 
+                kernel_initializer=critic_kernel_initializer,
+                output_activation_func=critic_activation_func, 
+                output_kernel_initializer=critic_kernel_initializer, )
+        else:
+            self._critic = None
         
         self._actor = LSTMNeuralNetworkModel(
             num_state_params, 
@@ -108,7 +113,9 @@ class A2CLSTM(object):
     
     def predict_values(self, inputs, training=False):
         
-        values = self._critic(inputs)
+        values = 0
+        if self.trainble:
+            values = self._critic(inputs)
         
         return values
     
@@ -116,7 +123,7 @@ class A2CLSTM(object):
         return self.memory.get_samples()
         
     def feed_batch(self, batch):
-        for i in range(len(state)):
+        for i in range(len(batch['state'])):
             self.feed(batch['state'][i], 
                       batch['action'][i], 
                       batch['reward'][i], 
@@ -138,58 +145,59 @@ class A2CLSTM(object):
             
     def train(self):
             
-        samples = self.memory.get_samples()
-        
-        states = self.split_to_timesteps(samples['state'], samples['done'])
-        #est_values = self._predict_train_values(states)
-        
-        next_dones=np.copy(samples['done'])
-        next_dones = np.roll(next_dones, -1)
-        next_dones[-1] = True
-        next_states = self.split_to_timesteps(samples['next_state'], next_dones)
-        #est_next_values = self._predict_train_values(next_states)
-        
-        #returns = self._returns_est(samples['reward'], samples['done'], est_values)
-        #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
-        #returns = self._general_advantage_estimates(samples['reward'], samples['done'], est_values, est_next_values, self.lam)
-        
-        indices = [i for i in range(0, len(samples['state']))]
-        random.shuffle(indices)
-        
-        states = np.asarray([states[i] for i in indices])
-        next_states = np.asarray([next_states[i] for i in indices])
-        actions = np.asarray([samples['action'][i] for i in indices])
-        rewards = np.asarray([samples['reward'][i] for i in indices])
-        dones = np.asarray([samples['done'][i] for i in indices])
-        
-        critic_loss = self._critic_train(states, next_states, actions, rewards, dones)
-        policy_loss, entropy_loss, policy_entropy_loss = self._actor_train(states)
-
-        self.entropy_coef *= self.entropy_decoy
-        self.train_step += 1
-
-        test_state = np.asarray([states[0]])
-        test_logit, test_value = self.predict(test_state)
-        print("========================")
-        print('train_step: ', self.train_step)
-        print("------------------------")
-        print('entropy coef: ', self.entropy_coef)
-        print("------------------------")
-        print('test logit: ', test_logit)
-        print("------------------------")
-        print('test value: ', test_value)
-        print("------------------------")
-        print('critic loss: ', critic_loss)
-        print("------------------------")
-        print('policy loss: ', policy_loss)
-        print("------------------------")
-        print('entropy loss: ', entropy_loss)
-        print("------------------------")
-        print('policy+entropy loss: ', policy_entropy_loss)
-        print("========================")
-        
-        loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
-        self.clear_memory()
+        if self.trainble:
+            samples = self.memory.get_samples()
+            
+            states = self.split_to_timesteps(samples['state'], samples['done'])
+            #est_values = self._predict_train_values(states)
+            
+            next_dones=np.copy(samples['done'])
+            next_dones = np.roll(next_dones, -1)
+            next_dones[-1] = True
+            next_states = self.split_to_timesteps(samples['next_state'], next_dones)
+            #est_next_values = self._predict_train_values(next_states)
+            
+            #returns = self._returns_est(samples['reward'], samples['done'], est_values)
+            #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
+            #returns = self._general_advantage_estimates(samples['reward'], samples['done'], est_values, est_next_values, self.lam)
+            
+            indices = [i for i in range(0, len(samples['state']))]
+            random.shuffle(indices)
+            
+            states = np.asarray([states[i] for i in indices])
+            next_states = np.asarray([next_states[i] for i in indices])
+            actions = np.asarray([samples['action'][i] for i in indices])
+            rewards = np.asarray([samples['reward'][i] for i in indices])
+            dones = np.asarray([samples['done'][i] for i in indices])
+            
+            critic_loss = self._critic_train(states, next_states, actions, rewards, dones)
+            policy_loss, entropy_loss, policy_entropy_loss = self._actor_train(states)
+    
+            self.entropy_coef *= self.entropy_decoy
+            self.train_step += 1
+    
+            test_state = np.asarray([states[0]])
+            test_logit, test_value = self.predict(test_state)
+            print("========================")
+            print('train_step: ', self.train_step)
+            print("------------------------")
+            print('entropy coef: ', self.entropy_coef)
+            print("------------------------")
+            print('test logit: ', test_logit)
+            print("------------------------")
+            print('test value: ', test_value)
+            print("------------------------")
+            print('critic loss: ', critic_loss)
+            print("------------------------")
+            print('policy loss: ', policy_loss)
+            print("------------------------")
+            print('entropy loss: ', entropy_loss)
+            print("------------------------")
+            print('policy+entropy loss: ', policy_entropy_loss)
+            print("========================")
+            
+            loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
+            self.clear_memory()
         
         return loss
     
@@ -298,7 +306,8 @@ class A2CLSTM(object):
         return weights
     
     def set_weights(self, weights):
-        self._critic.set_weights(weights['critic'])
+        if self.trainble:
+            self._critic.set_weights(weights['critic'])
         self._actor.set_weights(weights['actor'])
         return weights
     
@@ -434,7 +443,8 @@ class A2CLSTM(object):
         shape = (1, self.timesteps, self.num_state_params)
         fix = np.random.random(shape)
         self.predict(fix)
-        self._critic.predict(fix)
+        if self.trainble:
+            self._critic.predict(fix)
         self._actor.predict(fix)
         
     def reset_lstm_memory(self):
@@ -442,18 +452,16 @@ class A2CLSTM(object):
         
     def save_model(self, path):
 
-        if not os.path.exists(path+'/critic'):
-            os.makedirs(path+'/critic')
+        if self.trainble:
+            if not os.path.exists(path+'/critic'):
+                os.makedirs(path+'/critic')
+            self._critic.save(path+'/critic', save_format="tf")
+                
         if not os.path.exists(path+'/actor'):
             os.makedirs(path+'/actor')
-
-        #bag_shape = (1, self.num_state_params)
-        #bag_fix = tf.random.normal(bag_shape)
-        #self.train_model_critic.predict(bag_fix)
-        #self.train_model_actor.predict(bag_fix)
-        self._critic.save(path+'/critic', save_format="tf")
         self._actor.save(path+'/actor', save_format="tf")
         
     def load_model(self, path):
-        self._critic = tf.keras.models.load_model(path+'/critic')
+        if self.trainble:
+            self._critic = tf.keras.models.load_model(path+'/critic')
         self._actor = tf.keras.models.load_model(path+'/actor')
