@@ -10,7 +10,8 @@ from pprint import pprint
 class A2C(object):
     def __init__(self,
                  num_state_params, 
-                 num_actions, 
+                 num_actions,
+                 trainble=True,
                  
                  critic_hidden_units=[128],
                  critic_activation_func='tanh', 
@@ -41,6 +42,7 @@ class A2C(object):
         self.actor_hidden_units = actor_hidden_units
         
         #параметры обучения
+        self.trainble = trainble
         self.critic_optimizer = tf.keras.optimizers.Adam(critic_learning_rate, decay=0.99, epsilon=1e-5)
         self.actor_optimizer = tf.keras.optimizers.Adam(actor_learning_rate, decay=0.99, epsilon=1e-5)      
         self.max_grad_norm = max_grad_norm
@@ -53,45 +55,20 @@ class A2C(object):
         self.critic_bacth_size = critic_bacth_size
         self.actor_bacth_size = actor_bacth_size
         
-        #memory
-        self.memory = ReplayMemory()
-        
-        #train memory
-        self._mb_states = []
-        self._mb_actions = []
-        self._mb_returns = []
-        self._mb_values = []
-        
         # Step_model that is used for sampling
-        self.step_model_critic = SimpleNeuralNetworkModel(
-            num_state_params,
-            critic_hidden_units, 
-            num_actions,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
+        if self.trainble:
+            self._critic = SimpleNeuralNetworkModel(
+                num_state_params,
+                critic_hidden_units, 
+                num_actions,
+                activation_func=critic_activation_func, 
+                kernel_initializer=critic_kernel_initializer,
+                output_activation_func=critic_activation_func, 
+                output_kernel_initializer=critic_kernel_initializer, )
+        else:
+            self._critic = None
         
-        self.step_model_actor = SimpleNeuralNetworkModel(
-            num_state_params, 
-            actor_hidden_units, 
-            num_actions,
-            activation_func=actor_activation_func, 
-            kernel_initializer=actor_kernel_initializer,
-            output_activation_func=actor_activation_func, 
-            output_kernel_initializer=actor_kernel_initializer,)
-        
-        # Train model for training
-        self.train_model_critic = SimpleNeuralNetworkModel(
-            num_state_params,
-            critic_hidden_units, 
-            num_actions,
-            activation_func=critic_activation_func, 
-            kernel_initializer=critic_kernel_initializer,
-            output_activation_func=critic_activation_func, 
-            output_kernel_initializer=critic_kernel_initializer, )
-        
-        self.train_model_actor = SimpleNeuralNetworkModel(
+        self._actor = SimpleNeuralNetworkModel(
             num_state_params, 
             actor_hidden_units, 
             num_actions,
@@ -101,7 +78,15 @@ class A2C(object):
             output_kernel_initializer=actor_kernel_initializer,)
         
         self.bug_fix()
-        self._update_step_model()
+        
+        #memory
+        self.memory = ReplayMemory()
+        
+        #train memory
+        self._mb_states = []
+        self._mb_actions = []
+        self._mb_returns = []
+        self._mb_values = []
     
     def predict(self, inputs, training=False):
         
@@ -112,34 +97,28 @@ class A2C(object):
     
     def predict_policy(self, inputs, training=False):
         
-        policy_logits = self.step_model_actor(inputs)
+        policy_logits = self._actor(inputs)
         
         return policy_logits
     
     def predict_values(self, inputs, training=False):
-        
-        values = self.step_model_critic(inputs)
-        
-        return values
-    
-    def _predict_train(self, inputs, training=False):
-        
-        values = self._predict_train_values(inputs, training)
-        policy_logits = self._predict_train_policy(inputs, training)
-        
-        return policy_logits, values
-    
-    def _predict_train_policy(self, inputs, training=False):
-        
-        policy_logits = self.train_model_actor(inputs)
-        
-        return policy_logits
-    
-    def _predict_train_values(self, inputs, training=False):
-        
-        values = self.train_model_critic(inputs)
+                
+        values = 0
+        if self.trainble:
+            values = self._critic(inputs)
         
         return values
+    
+    def get_memory(self):
+        return self.memory.get_samples()
+        
+    def feed_batch(self, batch):
+        for i in range(len(batch['state'])):
+            self.feed(batch['state'][i], 
+                      batch['action'][i], 
+                      batch['reward'][i], 
+                      batch['next_state'][i], 
+                      batch['done'][i])
     
     def feed(self, state, action, reward, next_state, done):
         replay = {
@@ -156,50 +135,61 @@ class A2C(object):
         
     def train(self):
         
-        samples = self.memory.get_samples()
-        
-        #est_values = self._predict_train_values(samples['state'])
-        #est_next_values = self._predict_train_values(samples['next_state'])
-        
-        #returns = self._returns_est(samples['reward'], samples['done'], est_values)
-        #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
-        #returns = self._general_advantage_estimates(samples['reward'],samples['done'], est_values, est_next_values, self.lam)
-        
-        indices = [i for i in range(0, len(samples['state']))]
-        random.shuffle(indices)
-        
-        states = np.asarray([samples['state'][i] for i in indices])
-        next_states = np.asarray([samples['next_state'][i] for i in indices])
-        actions = np.asarray([samples['action'][i] for i in indices])
-        rewards = np.asarray([samples['reward'][i] for i in indices])
-        dones = np.asarray([samples['done'][i] for i in indices])
-        #returns = np.asarray([returns[i] for i in indices])
-        
-        critic_loss = self._critic_train(states, next_states, actions, rewards, dones)
-        policy_loss, entropy_loss, policy_entropy_loss = self._actor_train(states)
-
-        self._update_step_model()
-        self.entropy_coef *= self.entropy_decoy
-        self.train_step += 1
-
-        test_state = np.asarray([samples['state'][0]])
-        test_logit, test_value = self.predict(test_state)
-        print(test_logit)
-        print("------------------------")
-        print(test_value)
-        print("------------------------")
-        loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
-        print(loss)
-        print("========================")
-        
-        self.clear_memory()
+        if self.trainble:
+            samples = self.memory.get_samples()
+            
+            #est_values = self._predict_train_values(samples['state'])
+            #est_next_values = self._predict_train_values(samples['next_state'])
+            
+            #returns = self._returns_est(samples['reward'], samples['done'], est_values)
+            #returns = self._returns(samples['reward'], samples['done'], est_values[-1])
+            #returns = self._general_advantage_estimates(samples['reward'],samples['done'], est_values, est_next_values, self.lam)
+            
+            indices = [i for i in range(0, len(samples['state']))]
+            random.shuffle(indices)
+            
+            states = np.asarray([samples['state'][i] for i in indices])
+            next_states = np.asarray([samples['next_state'][i] for i in indices])
+            actions = np.asarray([samples['action'][i] for i in indices])
+            rewards = np.asarray([samples['reward'][i] for i in indices])
+            dones = np.asarray([samples['done'][i] for i in indices])
+            #returns = np.asarray([returns[i] for i in indices])
+            
+            critic_loss = self._critic_train(states, next_states, actions, rewards, dones)
+            policy_loss, entropy_loss, policy_entropy_loss = self._actor_train(states)
+    
+            self.entropy_coef *= self.entropy_decoy
+            self.train_step += 1
+    
+            test_state = np.asarray([samples['state'][0]])
+            test_logit, test_value = self.predict(test_state)
+            print("========================")
+            print('train_step: ', self.train_step)
+            print("------------------------")
+            print('entropy coef: ', self.entropy_coef)
+            print("------------------------")
+            print('test logit: ', test_logit)
+            print("------------------------")
+            print('test value: ', test_value)
+            print("------------------------")
+            print('critic loss: ', critic_loss)
+            print("------------------------")
+            print('policy loss: ', policy_loss)
+            print("------------------------")
+            print('entropy loss: ', entropy_loss)
+            print("------------------------")
+            print('policy+entropy loss: ', policy_entropy_loss)
+            print("========================")
+            
+            loss = [critic_loss, policy_loss, entropy_loss, policy_entropy_loss]
+            self.clear_memory()
         
         return loss
     
     def _critic_train(self, states, next_states, actions, rewards, dones):
 
         critic_loss_list = []
-        next_values = np.max(self._predict_train_values(next_states), axis=1)
+        next_values = np.max(self.predict_values(next_states), axis=1)
         target_values = np.where(dones, rewards, rewards + self.gamma * next_values)
 
         for start in range(0, self.memory.size, self.critic_bacth_size):
@@ -227,13 +217,13 @@ class A2C(object):
             #logits - вектор необработанных (ненормализованных) предсказаний, 
             #которые генерирует модель классификации
             values = tf.math.reduce_sum(
-                self._predict_train_values(self._mb_states) * \
+                self.predict_values(self._mb_states) * \
                     tf.one_hot(self._mb_actions, self.num_actions), axis=1)
             loss = self._value_loss(values, self._mb_values)
             
         # Use the gradient tape to automatically retrieve
         # the gradients of the trainable variables with respect to the loss.
-        value_weights = self.train_model_critic.trainable_weights
+        value_weights = self._critic.trainable_weights
         value_gradients = tape.gradient(loss, value_weights)
         
         if self.max_grad_norm is not None:
@@ -252,7 +242,7 @@ class A2C(object):
         policy_loss_list = []
         policy_entropy_loss_list = []
             
-        values = self._predict_train_values(states).numpy()
+        values = self.predict_values(states).numpy()
 
         for start in range(0, self.memory.size, self.actor_bacth_size):
 
@@ -270,12 +260,12 @@ class A2C(object):
 
         return policy_loss_list, entropy_loss_list, policy_entropy_loss_list 
     
-    #@tf.function
+    @tf.function
     def _actor_train_step(self):
         
         with tf.GradientTape() as tape:
                         
-            policy_logits = self.train_model_actor(self._mb_states)
+            policy_logits = self._actor(self._mb_states)
             advantages = self._advantages(policy_logits, self._mb_values)
             
             policy_loss = self._policy_loss(policy_logits, advantages)
@@ -284,7 +274,7 @@ class A2C(object):
             #clip_entropy_loss = tf.minimum(entropy_loss*self.max_entropy_part, entropy_loss)
             policy_entropy_loss = policy_loss - self.entropy_coef * entropy_loss
             
-        policy_weights = self.train_model_actor.trainable_weights
+        policy_weights = self._actor.trainable_weights
         policy_gradients = tape.gradient(policy_entropy_loss, policy_weights)
         
         if self.max_grad_norm is not None:
@@ -293,10 +283,17 @@ class A2C(object):
         self.actor_optimizer.apply_gradients(zip(policy_gradients, policy_weights))
         return policy_loss, entropy_loss, policy_entropy_loss
     
-    def _update_step_model(self):
-        
-        self.step_model_critic.set_weights(self.train_model_critic.get_weights()) 
-        self.step_model_actor.set_weights(self.train_model_actor.get_weights()) 
+    def get_weights(self):
+        weights = {
+            'critic': self._critic.get_weights(),
+            'actor': self._actor.get_weights()
+            }
+        return weights
+    
+    def set_weights(self, weights):
+        self._critic.set_weights(weights['critic'])
+        self._actor.set_weights(weights['actor'])
+        return weights
         
     def get_action(self, state, legal_actions):
         
@@ -331,19 +328,18 @@ class A2C(object):
         return loss
       
     def _policy_loss(self, logits, advantages):
-        logits=logits
-        advantages=advantages
-        policy_loss = tf.math.reduce_mean(
+        
+        loss = tf.math.reduce_mean(
             tf.math.reduce_sum(logits * advantages,axis=1))
         
-        return policy_loss
+        return loss
       
     def _entropy_loss(self, logits):
         
-        entropy_loss = tf.math.reduce_mean(
+        loss = tf.math.reduce_mean(
             tf.keras.losses.categorical_crossentropy(logits, logits, from_logits=True))
         
-        return entropy_loss
+        return loss
     
     def _advantages(self, logits, values):
         
@@ -408,30 +404,23 @@ class A2C(object):
     def bug_fix(self):
         shape = (1, self.num_state_params)
         fix = np.random.random(shape)
-        self._predict_train(fix)
-        self.predict(fix)
-        self.train_model_critic.predict(fix)
-        self.train_model_actor.predict(fix)
-        self.step_model_critic.predict(fix)
-        self.step_model_actor.predict(fix)
-
+        self.predict(fix)        
+        if self.trainble:
+            self._critic.predict(fix)
+        self._actor.predict(fix)
+        
     def save_model(self, path):
 
-        if not os.path.exists(path+'/critic'):
-            os.makedirs(path+'/critic')
+        if self.trainble:
+            if not os.path.exists(path+'/critic'):
+                os.makedirs(path+'/critic')
+            self._critic.save(path+'/critic', save_format="tf")
+                
         if not os.path.exists(path+'/actor'):
             os.makedirs(path+'/actor')
-
-        #bag_shape = (1, self.num_state_params)
-        #bag_fix = tf.random.normal(bag_shape)
-        #self.train_model_critic.predict(bag_fix)
-        #self.train_model_actor.predict(bag_fix)
-        self.train_model_critic.save(path+'/critic', save_format="tf")
-        self.train_model_actor.save(path+'/actor', save_format="tf")
+        self._actor.save(path+'/actor', save_format="tf")
         
     def load_model(self, path):
-        self.train_model_critic = tf.keras.models.load_model(path+'/critic')
-        self.train_model_actor = tf.keras.models.load_model(path+'/actor')
-        self.step_model_critic = tf.keras.models.load_model(path+'/critic')
-        self.step_model_actor = tf.keras.models.load_model(path+'/actor')
-        self._update_step_model()
+        if self.trainble:
+            self._critic = tf.keras.models.load_model(path+'/critic')
+        self._actor = tf.keras.models.load_model(path+'/actor')
